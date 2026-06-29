@@ -1,6 +1,7 @@
 import json
 from datetime import datetime, timedelta
 from flask import Blueprint, request, jsonify
+from sqlalchemy import func
 
 from app.models import db, WrongQuestion, Question, StudyRecord
 from app.utils.jwt_auth import token_required
@@ -64,27 +65,32 @@ def review_wrong_question(current_user, wrong_id):
     data = request.get_json()
     user_answer = data.get('answer')
     is_correct = data.get('is_correct', False)
-    
+
     wrong_question = WrongQuestion.query.filter_by(id=wrong_id, user_id=current_user['user_id']).first()
-    
+
     if not wrong_question:
         return jsonify({'code': 404, 'message': '错题记录不存在', 'data': None}), 404
-    
+
+    # 如果前端传了答案，后端再验证一次
+    if user_answer is not None and wrong_question.question:
+        is_correct = str(user_answer).strip() == str(wrong_question.question.answer).strip()
+
     # 更新复习时间
     wrong_question.last_review_at = datetime.now()
-    
+
     if is_correct:
-        # 答对了，检查是否已掌握（连续答对3次）
+        # 答对了，减少错误计数；当错误计数归零则标记为已掌握
         if wrong_question.wrong_count <= 1:
+            wrong_question.wrong_count = 0
             wrong_question.status = 'mastered'
         else:
             wrong_question.wrong_count -= 1
     else:
-        # 答错了，错误次数+1
+        # 答错了，错误次数+1，重置进度
         wrong_question.wrong_count += 1
         wrong_question.status = 'pending'
         wrong_question.wrong_answer = str(user_answer) if user_answer else wrong_question.wrong_answer
-    
+
     # 记录学习记录
     study_record = StudyRecord(
         user_id=current_user['user_id'],
@@ -93,9 +99,22 @@ def review_wrong_question(current_user, wrong_id):
         is_correct=is_correct
     )
     db.session.add(study_record)
-    
+
+    # 同步更新知识点掌握度
+    if wrong_question.question:
+        from app.models import UserKnowledgeMastery
+        mastery = UserKnowledgeMastery.query.filter_by(
+            user_id=current_user['user_id'],
+            knowledge_point=wrong_question.question.knowledge_point
+        ).first()
+        if mastery:
+            if is_correct:
+                mastery.mastery_rate = min(100, mastery.mastery_rate + 5)
+            else:
+                mastery.mastery_rate = max(0, mastery.mastery_rate - 10)
+
     db.session.commit()
-    
+
     return jsonify({
         'code': 200,
         'message': '提交成功',
@@ -151,7 +170,6 @@ def get_wrong_statistics(current_user):
     mastered_count = WrongQuestion.query.filter_by(user_id=current_user['user_id'], status='mastered').count()
     
     # 按科目统计
-    from sqlalchemy import func
     subject_stats = db.session.query(
         Question.subject,
         func.count(WrongQuestion.id)

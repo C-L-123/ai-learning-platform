@@ -2,6 +2,20 @@
   <div class="wrong-question">
     <h2 class="page-title">错题本</h2>
 
+    <!-- 今日待复习提醒 -->
+    <el-alert
+      v-if="todayReviewCount > 0"
+      :title="`今日有 ${todayReviewCount} 道错题待复习`"
+      type="warning"
+      show-icon
+      :closable="false"
+      style="margin-bottom: 20px"
+    >
+      <el-button type="warning" size="small" style="margin-left: 10px" @click="startTodayReview">
+        立即复习
+      </el-button>
+    </el-alert>
+
     <!-- 统计卡片 -->
     <el-row :gutter="20" class="stats-row">
       <el-col :span="8">
@@ -76,6 +90,16 @@
       </el-table>
 
       <el-empty v-if="wrongQuestions.length === 0" description="暂无错题记录，继续加油！" />
+
+      <el-pagination
+        v-if="wrongTotal > wrongPageSize"
+        style="margin-top: 15px; justify-content: center"
+        layout="total, prev, pager, next"
+        :total="wrongTotal"
+        :page-size="wrongPageSize"
+        v-model:current-page="wrongPage"
+        @current-change="loadWrongQuestions"
+      />
     </el-card>
 
     <!-- 复习弹窗 -->
@@ -84,26 +108,49 @@
         <div class="question-info">
           <el-tag>{{ currentReviewQuestion.subject }}</el-tag>
           <el-tag type="success">{{ currentReviewQuestion.knowledge_point }}</el-tag>
+          <el-tag type="danger" size="small">已错 {{ currentReviewQuestion.wrong_count }} 次</el-tag>
         </div>
-        
+
         <div class="question-text">
           <p><strong>题目：</strong>{{ currentReviewQuestion.content }}</p>
         </div>
 
-        <div v-if="currentReviewQuestion.options" class="options">
-          <div v-for="(opt, idx) in currentReviewQuestion.options" :key="idx" class="option">
-            {{ String.fromCharCode(65 + idx) }}. {{ opt }}
+        <!-- 答题区域 -->
+        <div v-if="!reviewShowResult">
+          <div v-if="currentReviewQuestion.options" class="options">
+            <el-radio-group v-model="reviewAnswer" class="option-group">
+              <el-radio
+                v-for="(opt, idx) in currentReviewQuestion.options"
+                :key="idx"
+                :label="String.fromCharCode(65 + idx)"
+                class="option-radio"
+              >
+                {{ String.fromCharCode(65 + idx) }}. {{ opt }}
+              </el-radio>
+            </el-radio-group>
+          </div>
+          <div v-else>
+            <el-input v-model="reviewAnswer" placeholder="请输入答案" size="large" style="width: 300px" />
+          </div>
+          <div class="review-action" style="margin-top: 20px">
+            <el-button type="primary" size="large" @click="submitReviewAnswer" :disabled="!reviewAnswer">
+              提交答案
+            </el-button>
           </div>
         </div>
 
-        <div class="answer-section">
-          <p><strong>你的错误答案：</strong><span class="wrong-answer">{{ currentReviewQuestion.wrong_answer }}</span></p>
-          <p><strong>正确答案：</strong><span class="correct-answer">{{ currentReviewQuestion.correct_answer }}</span></p>
-        </div>
-
-        <div class="review-action">
-          <el-button type="success" @click="submitReview(true)">已掌握</el-button>
-          <el-button type="warning" @click="submitReview(false)">还需复习</el-button>
+        <!-- 结果区域 -->
+        <div v-else>
+          <div class="result-area" :class="reviewIsCorrect ? 'correct' : 'wrong'">
+            <span>{{ reviewIsCorrect ? '✅ 回答正确！' : '❌ 回答错误' }}</span>
+          </div>
+          <div class="answer-section">
+            <p><strong>你的答案：</strong><span :class="reviewIsCorrect ? 'correct-answer' : 'wrong-answer'">{{ reviewAnswer }}</span></p>
+            <p><strong>正确答案：</strong><span class="correct-answer">{{ currentReviewQuestion.correct_answer }}</span></p>
+          </div>
+          <div class="review-action">
+            <el-button type="primary" @click="closeReviewDialog">继续</el-button>
+          </div>
         </div>
       </div>
     </el-dialog>
@@ -120,6 +167,14 @@ const stats = ref({})
 const wrongQuestions = ref([])
 const showReviewDialog = ref(false)
 const currentReviewQuestion = ref(null)
+const todayReviewCount = ref(0)
+const todayReviewQuestions = ref([])
+const reviewAnswer = ref('')
+const reviewShowResult = ref(false)
+const reviewIsCorrect = ref(false)
+const wrongPage = ref(1)
+const wrongPageSize = 10
+const wrongTotal = ref(0)
 
 const loadStats = async () => {
   try {
@@ -135,35 +190,68 @@ const loadStats = async () => {
 const loadWrongQuestions = async () => {
   try {
     const res = await api.get('/wrong-question/list', {
-      params: { status: currentStatus.value }
+      params: { status: currentStatus.value, page: wrongPage.value, page_size: wrongPageSize }
     })
     if (res.code === 200) {
       wrongQuestions.value = res.data.list
+      wrongTotal.value = res.data.total
     }
   } catch (error) {
     console.error('加载错题失败', error)
   }
 }
 
+const loadTodayReview = async () => {
+  try {
+    const res = await api.get('/wrong-question/review-today')
+    if (res.code === 200) {
+      todayReviewCount.value = res.data.count
+      todayReviewQuestions.value = res.data.questions
+    }
+  } catch (error) {
+    console.error('加载今日复习失败', error)
+  }
+}
+
+const startTodayReview = () => {
+  if (todayReviewQuestions.value.length > 0) {
+    // 从今日待复习列表中取第一条，找到完整的错题信息
+    const firstReview = todayReviewQuestions.value[0]
+    const fullQuestion = wrongQuestions.value.find(q => q.id === firstReview.id) || firstReview
+    currentReviewQuestion.value = fullQuestion
+    reviewAnswer.value = ''
+    reviewShowResult.value = false
+    showReviewDialog.value = true
+  }
+}
+
 const reviewQuestion = (row) => {
   currentReviewQuestion.value = row
+  reviewAnswer.value = ''
+  reviewShowResult.value = false
   showReviewDialog.value = true
 }
 
-const submitReview = async (isMastered) => {
+const submitReviewAnswer = async () => {
   try {
     const res = await api.post(`/wrong-question/review/${currentReviewQuestion.value.id}`, {
-      is_correct: isMastered
+      answer: reviewAnswer.value,
+      is_correct: reviewAnswer.value === currentReviewQuestion.value.correct_answer
     })
     if (res.code === 200) {
-      ElMessage.success(isMastered ? '恭喜！已标记为掌握' : '已记录，继续加油')
-      showReviewDialog.value = false
-      loadStats()
-      loadWrongQuestions()
+      reviewIsCorrect.value = res.data.is_correct
+      reviewShowResult.value = true
     }
   } catch (error) {
-    console.error('提交复习结果失败', error)
+    console.error('提交复习答案失败', error)
   }
+}
+
+const closeReviewDialog = () => {
+  showReviewDialog.value = false
+  loadStats()
+  loadWrongQuestions()
+  loadTodayReview()
 }
 
 const markMastered = async (id) => {
@@ -203,6 +291,7 @@ const removeQuestion = async (id) => {
 onMounted(() => {
   loadStats()
   loadWrongQuestions()
+  loadTodayReview()
 })
 </script>
 
@@ -296,5 +385,34 @@ onMounted(() => {
   display: flex;
   justify-content: center;
   gap: 20px;
+}
+
+.option-group {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.option-radio {
+  font-size: 15px;
+}
+
+.result-area {
+  padding: 15px;
+  border-radius: 8px;
+  text-align: center;
+  font-size: 18px;
+  font-weight: 600;
+  margin-bottom: 15px;
+}
+
+.result-area.correct {
+  background: #f0f9eb;
+  color: #67C23A;
+}
+
+.result-area.wrong {
+  background: #fef0f0;
+  color: #F56C6C;
 }
 </style>

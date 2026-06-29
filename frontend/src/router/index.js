@@ -49,6 +49,12 @@ const routes = [
         name: 'Profile',
         component: () => import('@/views/Profile.vue'),
         meta: { title: '个人中心' }
+      },
+      {
+        path: 'subject-manage',
+        name: 'SubjectManage',
+        component: () => import('@/views/SubjectManage.vue'),
+        meta: { title: '科目管理' }
       }
     ]
   }

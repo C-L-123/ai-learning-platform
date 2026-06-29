@@ -24,7 +24,7 @@
       </div>
     </el-header>
 
-    <el-container>
+    <el-container class="body-container">
       <!-- 左侧菜单 -->
       <el-aside width="220px" class="aside">
         <el-menu
@@ -55,13 +55,17 @@
             <el-icon><Setting /></el-icon>
             <span>个人中心</span>
           </el-menu-item>
+          <el-menu-item index="/subject-manage">
+            <el-icon><Grid /></el-icon>
+            <span>科目管理</span>
+          </el-menu-item>
         </el-menu>
       </el-aside>
 
       <!-- 主内容区 -->
-      <el-main class="main">
+      <div class="main-wrapper">
         <router-view />
-      </el-main>
+      </div>
     </el-container>
   </el-container>
 </template>
@@ -104,6 +108,13 @@ const handleCommand = (command) => {
 <style scoped>
 .layout-container {
   height: 100vh;
+  overflow: hidden;
+  flex-direction: column;
+}
+
+.body-container {
+  flex: 1;
+  overflow: hidden;
 }
 
 .header {
@@ -114,6 +125,7 @@ const handleCommand = (command) => {
   padding: 0 20px;
   color: white;
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+  flex-shrink: 0;
 }
 
 .header-left .logo {
@@ -143,9 +155,11 @@ const handleCommand = (command) => {
   height: 100%;
 }
 
-.main {
+.main-wrapper {
+  flex: 1;
+  overflow-y: auto;
+  overflow-x: hidden;
   background-color: #f5f7fa;
   padding: 20px;
-  overflow-y: auto;
 }
 </style>

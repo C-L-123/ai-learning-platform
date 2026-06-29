@@ -1,5 +1,4 @@
 import json
-import random
 from datetime import datetime, date
 from flask import Blueprint, request, jsonify
 from sqlalchemy import func
@@ -9,116 +8,134 @@ from app.utils.jwt_auth import token_required
 
 bp = Blueprint('practice', __name__)
 
+_ai_service = None
+
+def get_ai_service():
+    global _ai_service
+    if _ai_service is None:
+        from app.utils.ai_question_service import AIQuestionService
+        _ai_service = AIQuestionService()
+    return _ai_service
+
+
+def _save_questions_to_db(questions_data, subject):
+    """将 AI 生成的题目存入数据库并返回 Question 对象列表"""
+    saved = []
+    for qd in questions_data:
+        question = Question(
+            subject=subject,
+            knowledge_point=qd.get('knowledge_point', '综合'),
+            difficulty=qd.get('difficulty', 1),
+            question_type=qd.get('question_type', '单选'),
+            content=qd['content'],
+            options=json.dumps(qd.get('options', []), ensure_ascii=False),
+            answer=qd['answer'],
+            analysis=qd.get('analysis', '')
+        )
+        db.session.add(question)
+        db.session.flush()  # 获取 id
+        saved.append(question)
+    db.session.commit()
+    return saved
+
+
+def _format_question(q):
+    """格式化题目为返回字典"""
+    return {
+        'id': q.id,
+        'subject': q.subject,
+        'knowledge_point': q.knowledge_point,
+        'difficulty': q.difficulty,
+        'question_type': q.question_type,
+        'content': q.content,
+        'options': json.loads(q.options) if q.options else None
+    }
+
+
 @bp.route('/questions', methods=['GET'])
 @token_required
 def get_questions(current_user):
-    """获取题目列表"""
+    """AI 生成题目列表"""
     subject = request.args.get('subject', '数学')
     knowledge_point = request.args.get('knowledge_point')
-    difficulty = request.args.get('difficulty', type=int)
-    page = request.args.get('page', 1, type=int)
-    page_size = request.args.get('page_size', 20, type=int)
-    
-    query = Question.query.filter_by(subject=subject)
-    
-    if knowledge_point:
-        query = query.filter(Question.knowledge_point == knowledge_point)
-    if difficulty:
-        query = query.filter(Question.difficulty == difficulty)
-    
-    total = query.count()
-    questions = query.offset((page - 1) * page_size).limit(page_size).all()
-    
-    result = []
-    for q in questions:
-        result.append({
-            'id': q.id,
-            'subject': q.subject,
-            'knowledge_point': q.knowledge_point,
-            'difficulty': q.difficulty,
-            'question_type': q.question_type,
-            'content': q.content,
-            'options': json.loads(q.options) if q.options else None
+    difficulty = request.args.get('difficulty', 1, type=int)
+    count = request.args.get('page_size', 10, type=int)
+
+    # 限制单次出题数量
+    count = min(count, 20)
+
+    try:
+        ai = get_ai_service()
+        questions_data = ai.generate_questions(
+            subject=subject,
+            knowledge_point=knowledge_point,
+            difficulty=difficulty,
+            count=count
+        )
+
+        if not questions_data:
+            return jsonify({'code': 500, 'message': 'AI 出题失败，请稍后重试', 'data': None}), 500
+
+        saved = _save_questions_to_db(questions_data, subject)
+        result = [_format_question(q) for q in saved]
+
+        return jsonify({
+            'code': 200,
+            'message': '出题成功',
+            'data': {
+                'list': result,
+                'total': len(result),
+                'page': 1,
+                'page_size': count
+            }
         })
-    
-    return jsonify({
-        'code': 200,
-        'message': '获取成功',
-        'data': {
-            'list': result,
-            'total': total,
-            'page': page,
-            'page_size': page_size
-        }
-    })
+    except Exception as e:
+        return jsonify({'code': 500, 'message': f'AI 出题异常: {str(e)}', 'data': None}), 500
 
 @bp.route('/smart-recommend', methods=['GET'])
 @token_required
 def smart_recommend(current_user):
-    """智能推荐题目（基于薄弱知识点）"""
+    """智能推荐题目 — AI 根据薄弱知识点出题"""
     subject = request.args.get('subject', '数学')
     count = request.args.get('count', 10, type=int)
-    
+    count = min(count, 20)
+
     # 获取用户薄弱知识点
     weak_points = UserKnowledgeMastery.query.filter_by(
         user_id=current_user['user_id'],
         subject=subject
     ).filter(UserKnowledgeMastery.mastery_rate < 75).order_by(UserKnowledgeMastery.mastery_rate).all()
-    
-    recommended_questions = []
-    
-    if weak_points:
-        # 优先从薄弱知识点中选题
-        for wp in weak_points:
-            kp_questions = Question.query.filter_by(
-                subject=subject,
-                knowledge_point=wp.knowledge_point
-            ).all()
-            
-            if kp_questions:
-                # 每个薄弱点选2-3题
-                sample_count = min(3, len(kp_questions), count - len(recommended_questions))
-                selected = random.sample(kp_questions, sample_count)
-                recommended_questions.extend(selected)
-                
-                if len(recommended_questions) >= count:
-                    break
-    else:
-        # 没有薄弱点，随机选题
-        all_questions = Question.query.filter_by(subject=subject).all()
-        if all_questions:
-            recommended_questions = random.sample(all_questions, min(count, len(all_questions)))
-    
-    # 如果还不够，补充其他题目
-    if len(recommended_questions) < count:
-        remaining = count - len(recommended_questions)
-        existing_ids = [q.id for q in recommended_questions]
-        other_questions = Question.query.filter(
-            Question.subject == subject,
-            ~Question.id.in_(existing_ids)
-        ).limit(remaining).all()
-        recommended_questions.extend(other_questions)
-    
-    result = []
-    for q in recommended_questions:
-        result.append({
-            'id': q.id,
-            'subject': q.subject,
-            'knowledge_point': q.knowledge_point,
-            'difficulty': q.difficulty,
-            'question_type': q.question_type,
-            'content': q.content,
-            'options': json.loads(q.options) if q.options else None
+
+    weak_point_names = [wp.knowledge_point for wp in weak_points[:5]] if weak_points else []
+
+    # 构建针对薄弱知识点的出题提示
+    kp_hint = '、'.join(weak_point_names) if weak_point_names else None
+
+    try:
+        ai = get_ai_service()
+        questions_data = ai.generate_questions(
+            subject=subject,
+            knowledge_point=kp_hint,
+            difficulty=2,
+            count=count
+        )
+
+        if not questions_data:
+            return jsonify({'code': 500, 'message': 'AI 出题失败，请稍后重试', 'data': None}), 500
+
+        saved = _save_questions_to_db(questions_data, subject)
+        result = [_format_question(q) for q in saved]
+
+        return jsonify({
+            'code': 200,
+            'message': '推荐成功',
+            'data': {
+                'questions': result,
+                'weak_points_focused': weak_point_names
+            }
         })
-    
-    return jsonify({
-        'code': 200,
-        'message': '推荐成功',
-        'data': {
-            'questions': result,
-            'weak_points_focused': [wp.knowledge_point for wp in weak_points[:5]] if weak_points else []
-        }
-    })
+    except Exception as e:
+        return jsonify({'code': 500, 'message': f'AI 出题异常: {str(e)}', 'data': None}), 500
 
 @bp.route('/submit-answer', methods=['POST'])
 @token_required
@@ -149,17 +166,19 @@ def submit_answer(current_user):
     )
     db.session.add(study_record)
     
-    # 更新知识点掌握度
+    # 更新知识点掌握度（答对+5%，答错-10%，范围0-100）
     mastery = UserKnowledgeMastery.query.filter_by(
         user_id=current_user['user_id'],
         knowledge_point=question.knowledge_point
     ).first()
-    
+
     if mastery:
         mastery.total_questions += 1
         if is_correct:
             mastery.correct_questions += 1
-        mastery.mastery_rate = (mastery.correct_questions / mastery.total_questions) * 100
+            mastery.mastery_rate = min(100, mastery.mastery_rate + 5)
+        else:
+            mastery.mastery_rate = max(0, mastery.mastery_rate - 10)
     else:
         new_mastery = UserKnowledgeMastery(
             user_id=current_user['user_id'],
@@ -167,7 +186,7 @@ def submit_answer(current_user):
             subject=question.subject,
             total_questions=1,
             correct_questions=1 if is_correct else 0,
-            mastery_rate=100 if is_correct else 0
+            mastery_rate=55 if is_correct else 40
         )
         db.session.add(new_mastery)
     
@@ -228,9 +247,10 @@ def get_practice_statistics(current_user):
         study_type='practice'
     ).filter(func.date(StudyRecord.created_at) == today).count()
     
-    # 总学习时长（秒）
+    # 总学习时长（秒）- 从整场学习记录中取
     total_time = db.session.query(func.sum(StudyRecord.answer_time)).filter_by(
-        user_id=current_user['user_id']
+        user_id=current_user['user_id'],
+        study_type='practice_session'
     ).scalar() or 0
     
     accuracy = (correct_count / total_practice * 100) if total_practice > 0 else 0
@@ -246,6 +266,32 @@ def get_practice_statistics(current_user):
             'total_study_time': total_time
         }
     })
+
+@bp.route('/session-complete', methods=['POST'])
+@token_required
+def session_complete(current_user):
+    """记录一次刷题会话的总时长"""
+    data = request.get_json()
+    total_time = data.get('total_time', 0)
+    question_count = data.get('question_count', 0)
+
+    if total_time > 0:
+        record = StudyRecord(
+            user_id=current_user['user_id'],
+            question_id=None,
+            study_type='practice_session',
+            is_correct=None,
+            answer_time=total_time
+        )
+        db.session.add(record)
+        db.session.commit()
+
+    return jsonify({
+        'code': 200,
+        'message': '记录成功',
+        'data': {'total_time': total_time}
+    })
+
 
 @bp.route('/daily-trend', methods=['GET'])
 @token_required

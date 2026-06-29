@@ -135,6 +135,23 @@ INSERT INTO questions (subject, knowledge_point, difficulty, question_type, cont
 ('物理', '电场', 2, '单选', '电场强度的单位是？', '["N", "C", "N/C", "J"]', 'N/C', 'E=F/q，单位N/C'),
 ('物理', '电路', 1, '单选', '欧姆定律的表达式是？', '["U=IR", "P=UI", "W=UIt", "Q=I²Rt"]', 'U=IR', '欧姆定律：U=IR');
 
+-- 科目表
+CREATE TABLE IF NOT EXISTS subjects (
+    id INT PRIMARY KEY AUTO_INCREMENT,
+    name VARCHAR(50) UNIQUE NOT NULL COMMENT '科目名称',
+    keywords TEXT COMMENT '知识点关键词(JSON)',
+    description VARCHAR(200) COMMENT '科目描述',
+    is_active BOOLEAN DEFAULT TRUE COMMENT '是否启用',
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='科目表';
+
+-- 插入默认科目
+INSERT INTO subjects (name, keywords, description) VALUES
+('数学', '["函数", "导数", "积分", "极限", "数列", "三角函数", "向量", "立体几何", "解析几何", "概率", "统计", "不等式", "方程", "集合", "逻辑", "复数", "矩阵", "排列组合", "二项式定理"]', '高中数学'),
+('英语', '["语法", "词汇", "阅读理解", "完形填空", "写作", "听力", "时态", "语态", "从句", "非谓语动词", "介词", "冠词"]', '高中英语'),
+('物理', '["力学", "电磁学", "光学", "热学", "原子物理", "运动学", "牛顿定律", "能量守恒", "动量守恒", "电场", "磁场", "电路"]', '高中物理'),
+('化学', '["有机化学", "无机化学", "化学反应", "化学平衡", "电化学", "元素周期", "化学键", "溶液", "氧化还原", "物质结构"]', '高中化学');
+
 -- 创建索引优化查询
 CREATE INDEX idx_study_records_user ON study_records(user_id);
 CREATE INDEX idx_study_records_date ON study_records(study_date);

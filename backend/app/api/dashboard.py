@@ -27,9 +27,10 @@ def get_dashboard_overview(current_user):
     ).count()
     accuracy = (correct_count / total_practice * 100) if total_practice > 0 else 0
     
-    # 3. 累计学习时长（分钟）
+    # 3. 累计学习时长（分钟）- 从整场学习记录中取
     total_seconds = db.session.query(func.sum(StudyRecord.answer_time)).filter_by(
-        user_id=user_id
+        user_id=user_id,
+        study_type='practice_session'
     ).scalar() or 0
     total_minutes = int(total_seconds / 60)
     

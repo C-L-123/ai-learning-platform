@@ -8,6 +8,19 @@
         <span class="card-title">选择刷题模式</span>
       </template>
 
+      <div style="margin-bottom: 20px">
+        <span style="margin-right: 10px">科目：</span>
+        <el-radio-group v-model="filter.subject">
+          <el-radio-button
+            v-for="s in subjectOptions"
+            :key="s.id"
+            :value="s.name"
+          >
+            {{ s.name }}
+          </el-radio-button>
+        </el-radio-group>
+      </div>
+
       <el-row :gutter="20">
         <el-col :span="12">
           <div class="mode-card smart-mode" @click="startSmartPractice">
@@ -31,10 +44,16 @@
         <el-form label-width="80px">
           <el-form-item label="科目">
             <el-select v-model="filter.subject" style="width: 100%">
-              <el-option label="数学" value="数学" />
-              <el-option label="英语" value="英语" />
-              <el-option label="物理" value="物理" />
+              <el-option
+                v-for="s in subjectOptions"
+                :key="s.id"
+                :label="s.name"
+                :value="s.name"
+              />
             </el-select>
+          </el-form-item>
+          <el-form-item label="知识点">
+            <el-input v-model="filter.knowledge_point" placeholder="可选，留空则全部" style="width: 100%" />
           </el-form-item>
           <el-form-item label="题目数量">
             <el-input-number v-model="questionCount" :min="5" :max="50" />
@@ -47,12 +66,22 @@
       </el-dialog>
     </el-card>
 
+    <!-- AI 出题 loading -->
+    <el-card v-if="loadingQuestions" class="loading-card">
+      <div class="loading-content">
+        <el-icon class="loading-icon" size="48"><Loading /></el-icon>
+        <h3>AI 正在出题中...</h3>
+        <p>请稍候，正在为您生成个性化题目</p>
+      </div>
+    </el-card>
+
     <!-- 刷题界面 -->
     <el-card v-if="isPracticing" class="practice-card">
       <template #header>
         <div class="practice-header">
           <span>答题进度：{{ currentIndex + 1 }} / {{ questions.length }}</span>
           <el-progress :percentage="progressPercent" :show-text="false" style="width: 200px" />
+          <span class="timer">⏱ {{ formatTime(sessionTime) }}</span>
           <el-button type="danger" link @click="exitPractice">退出</el-button>
         </div>
       </template>
@@ -148,7 +177,7 @@
 </template>
 
 <script setup>
-import { ref, computed } from 'vue'
+import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import api from '@/utils/request'
@@ -159,9 +188,12 @@ const isPracticing = ref(false)
 const showNormalPractice = ref(false)
 const showResult = ref(false)
 const showSummary = ref(false)
+const subjectOptions = ref([])
+const loadingQuestions = ref(false)
 
 const filter = ref({
-  subject: '数学'
+  subject: '数学',
+  knowledge_point: ''
 })
 const questionCount = ref(10)
 const questions = ref([])
@@ -171,6 +203,55 @@ const isCorrect = ref(false)
 const correctCount = ref(0)
 const wrongCount = ref(0)
 
+// 整场计时器
+const sessionTime = ref(0)
+const sessionStartTime = ref(0)
+let timerInterval = null
+
+const startTimer = () => {
+  sessionTime.value = 0
+  sessionStartTime.value = Date.now()
+  if (timerInterval) clearInterval(timerInterval)
+  timerInterval = setInterval(() => {
+    sessionTime.value = Math.floor((Date.now() - sessionStartTime.value) / 1000)
+  }, 1000)
+}
+
+const stopTimer = () => {
+  if (timerInterval) {
+    clearInterval(timerInterval)
+    timerInterval = null
+  }
+}
+
+const formatTime = (seconds) => {
+  const m = Math.floor(seconds / 60)
+  const s = seconds % 60
+  return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`
+}
+
+const loadSubjects = async () => {
+  try {
+    const res = await api.get('/subject/list')
+    if (res.code === 200) {
+      subjectOptions.value = res.data
+      if (subjectOptions.value.length > 0) {
+        filter.value.subject = subjectOptions.value[0].name
+      }
+    }
+  } catch (error) {
+    console.error('加载科目失败', error)
+  }
+}
+
+onMounted(() => {
+  loadSubjects()
+})
+
+onUnmounted(() => {
+  stopTimer()
+})
+
 const currentQuestion = computed(() => questions.value[currentIndex.value] || {})
 const progressPercent = computed(() => Math.round(((currentIndex.value + 1) / questions.value.length) * 100))
 const accuracy = computed(() => questions.value.length > 0 
@@ -178,6 +259,7 @@ const accuracy = computed(() => questions.value.length > 0
   : 0)
 
 const startSmartPractice = async () => {
+  loadingQuestions.value = true
   try {
     const res = await api.get('/practice/smart-recommend', {
       params: { subject: filter.value.subject, count: questionCount.value }
@@ -189,19 +271,55 @@ const startSmartPractice = async () => {
         currentIndex.value = 0
         correctCount.value = 0
         wrongCount.value = 0
-        ElMessage.success(`已为您智能推荐 ${questions.value.length} 道题目`)
+        startTimer()
+        ElMessage.success(`AI 已为您生成 ${questions.value.length} 道题目`)
       } else {
-        ElMessage.warning('暂无可推荐的题目')
+        ElMessage.warning('AI 出题失败，请稍后重试')
       }
+    } else {
+      ElMessage.error(res.message || 'AI 出题失败')
     }
   } catch (error) {
     console.error('获取题目失败', error)
+    ElMessage.error('AI 出题失败，请检查网络或稍后重试')
+  } finally {
+    loadingQuestions.value = false
   }
 }
 
 const startNormalPractice = async () => {
   showNormalPractice.value = false
-  await startSmartPractice()
+  loadingQuestions.value = true
+  try {
+    const params = {
+      subject: filter.value.subject,
+      page_size: questionCount.value
+    }
+    if (filter.value.knowledge_point) {
+      params.knowledge_point = filter.value.knowledge_point
+    }
+    const res = await api.get('/practice/questions', { params })
+    if (res.code === 200) {
+      questions.value = res.data.list
+      if (questions.value.length > 0) {
+        isPracticing.value = true
+        currentIndex.value = 0
+        correctCount.value = 0
+        wrongCount.value = 0
+        startTimer()
+        ElMessage.success(`AI 已生成 ${questions.value.length} 道题目`)
+      } else {
+        ElMessage.warning('AI 出题失败，请稍后重试')
+      }
+    } else {
+      ElMessage.error(res.message || 'AI 出题失败')
+    }
+  } catch (error) {
+    console.error('获取题目失败', error)
+    ElMessage.error('AI 出题失败，请检查网络或稍后重试')
+  } finally {
+    loadingQuestions.value = false
+  }
 }
 
 const submitAnswer = async () => {
@@ -230,12 +348,25 @@ const nextQuestion = () => {
     userAnswer.value = ''
     showResult.value = false
   } else {
+    stopTimer()
+    // 记录整场学习时长
+    api.post('/practice/session-complete', {
+      total_time: sessionTime.value,
+      question_count: questions.value.length
+    })
     isPracticing.value = false
     showSummary.value = true
   }
 }
 
 const exitPractice = () => {
+  stopTimer()
+  if (sessionTime.value > 0) {
+    api.post('/practice/session-complete', {
+      total_time: sessionTime.value,
+      question_count: currentIndex.value + 1
+    })
+  }
   isPracticing.value = false
   showResult.value = false
   userAnswer.value = ''
@@ -310,6 +441,13 @@ const backToStart = () => {
   display: flex;
   align-items: center;
   gap: 20px;
+}
+
+.timer {
+  font-size: 16px;
+  font-weight: 600;
+  color: #E6A23C;
+  font-family: monospace;
 }
 
 .question-info {
@@ -413,5 +551,34 @@ const backToStart = () => {
   display: flex;
   justify-content: center;
   gap: 20px;
+}
+
+.loading-card {
+  margin-top: 20px;
+}
+
+.loading-content {
+  text-align: center;
+  padding: 40px;
+}
+
+.loading-content h3 {
+  margin: 20px 0 10px;
+  font-size: 18px;
+  color: #303133;
+}
+
+.loading-content p {
+  color: #909399;
+}
+
+.loading-icon {
+  color: #409EFF;
+  animation: spin 1.5s linear infinite;
+}
+
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
 }
 </style>

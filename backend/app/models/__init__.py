@@ -53,7 +53,7 @@ class StudyRecord(db.Model):
     
     id = db.Column(db.Integer, primary_key=True, autoincrement=True)
     user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)
-    question_id = db.Column(db.Integer, db.ForeignKey('questions.id'))
+    question_id = db.Column(db.Integer, db.ForeignKey('questions.id'), nullable=True)
     study_type = db.Column(db.String(20), nullable=False)  # practice, exam, review
     is_correct = db.Column(db.Boolean)
     answer_time = db.Column(db.Integer)  # 答题时间（秒）
@@ -97,7 +97,7 @@ class WrongQuestion(db.Model):
 class UserKnowledgeMastery(db.Model):
     """用户知识点掌握度模型"""
     __tablename__ = 'user_knowledge_mastery'
-    
+
     id = db.Column(db.Integer, primary_key=True, autoincrement=True)
     user_id = db.Column(db.Integer, nullable=False)
     knowledge_point = db.Column(db.String(100), nullable=False)
@@ -106,7 +106,19 @@ class UserKnowledgeMastery(db.Model):
     correct_questions = db.Column(db.Integer, default=0)
     mastery_rate = db.Column(db.Float, default=0.0)  # 掌握率 0-100
     last_updated = db.Column(db.DateTime, default=datetime.now, onupdate=datetime.now)
-    
+
     __table_args__ = (
         db.UniqueConstraint('user_id', 'knowledge_point', name='_user_knowledge_uc'),
     )
+
+
+class Subject(db.Model):
+    """科目模型"""
+    __tablename__ = 'subjects'
+
+    id = db.Column(db.Integer, primary_key=True, autoincrement=True)
+    name = db.Column(db.String(50), unique=True, nullable=False)  # 科目名称
+    keywords = db.Column(db.Text)  # 知识点关键词列表(JSON格式)
+    description = db.Column(db.String(200))  # 科目描述
+    is_active = db.Column(db.Boolean, default=True)  # 是否启用
+    created_at = db.Column(db.DateTime, default=datetime.now)

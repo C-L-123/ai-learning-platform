@@ -8,7 +8,7 @@ load_dotenv()
 
 # 导入模型和路由
 from app.models import db
-from app.api import auth, analysis, practice, wrong_question, dashboard
+from app.api import auth, analysis, practice, wrong_question, dashboard, subject
 
 def create_app():
     app = Flask(__name__)
@@ -39,6 +39,7 @@ def create_app():
     app.register_blueprint(practice.bp, url_prefix='/api/practice')
     app.register_blueprint(wrong_question.bp, url_prefix='/api/wrong-question')
     app.register_blueprint(dashboard.bp, url_prefix='/api/dashboard')
+    app.register_blueprint(subject.bp, url_prefix='/api/subject')
     
     # 创建上传目录
     os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
