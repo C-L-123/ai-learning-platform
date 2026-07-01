@@ -55,6 +55,21 @@
           <el-form-item label="知识点">
             <el-input v-model="filter.knowledge_point" placeholder="可选，留空则全部" style="width: 100%" />
           </el-form-item>
+          <el-form-item label="题型">
+            <el-select v-model="filter.question_type" style="width: 100%">
+              <el-option label="全部题型" value="" />
+              <el-option label="单选题" value="单选" />
+              <el-option label="解答题" value="解答" />
+            </el-select>
+          </el-form-item>
+          <el-form-item label="难度">
+            <el-select v-model="filter.difficulty" style="width: 100%">
+              <el-option label="全部难度" :value="0" />
+              <el-option label="⭐ 基础题" :value="1" />
+              <el-option label="⭐⭐ 中等题" :value="2" />
+              <el-option label="⭐⭐⭐ 高难度题" :value="3" />
+            </el-select>
+          </el-form-item>
           <el-form-item label="题目数量">
             <el-input-number v-model="questionCount" :min="5" :max="50" />
           </el-form-item>
@@ -90,13 +105,41 @@
         <div class="question-info">
           <el-tag>{{ currentQuestion.subject }}</el-tag>
           <el-tag type="success">{{ currentQuestion.knowledge_point }}</el-tag>
+          <el-tag :type="currentQuestion.question_type === '解答' ? 'warning' : 'info'">{{ currentQuestion.question_type || '单选' }}</el-tag>
           <span class="difficulty">难度：{{ '★'.repeat(currentQuestion.difficulty) }}</span>
         </div>
 
         <div class="question-content">
-          <h4>{{ currentQuestion.content }}</h4>
+          <h4 v-html="renderLatex(currentQuestion.content)"></h4>
           
-          <div v-if="currentQuestion.options" class="options">
+          <!-- 解答题：文本输入 + 图片上传 -->
+          <div v-if="currentQuestion.question_type === '解答'" class="essay-answer">
+            <el-input
+              v-model="userAnswer"
+              type="textarea"
+              :rows="5"
+              placeholder="请输入你的解答..."
+              size="large"
+            />
+            <div class="essay-upload">
+              <el-upload
+                :action="practiceUploadUrl"
+                :headers="uploadHeaders"
+                :show-file-list="false"
+                :on-success="handleImageSuccess"
+                :before-upload="beforeImageUpload"
+                accept="image/*"
+              >
+                <el-button size="small" :icon="Camera">上传作答图片（可选）</el-button>
+              </el-upload>
+              <div v-if="uploadedImage" class="uploaded-preview">
+                <el-tag type="success" closable @close="uploadedImage = ''">已上传图片</el-tag>
+              </div>
+            </div>
+          </div>
+
+          <!-- 选择题：选项 -->
+          <div v-else-if="currentQuestion.options && currentQuestion.options.length > 0" class="options">
             <el-radio-group v-model="userAnswer" class="option-group">
               <el-radio
                 v-for="(option, index) in currentQuestion.options"
@@ -104,11 +147,12 @@
                 :label="String.fromCharCode(65 + index)"
                 class="option-item"
               >
-                {{ String.fromCharCode(65 + index) }}. {{ option }}
+                <span v-html="String.fromCharCode(65 + index) + '. ' + renderLatex(option)"></span>
               </el-radio>
             </el-radio-group>
           </div>
 
+          <!-- 填空题：单行输入 -->
           <div v-else class="fill-answer">
             <el-input
               v-model="userAnswer"
@@ -121,17 +165,36 @@
 
         <!-- 答案反馈 -->
         <div v-if="showResult" class="result-area" :class="isCorrect ? 'correct' : 'wrong'">
-          <el-icon size="24">{{ isCorrect ? 'CircleCheck' : 'CircleClose' }}</el-icon>
-          <span>{{ isCorrect ? '回答正确！' : '回答错误' }}</span>
+          <div class="result-header">
+            <el-icon size="28"><CircleCheck v-if="isCorrect" /><CircleClose v-else /></el-icon>
+            <span>{{ isCorrect ? '回答正确！' : '回答错误' }}</span>
+          </div>
           <div class="answer-detail">
-            <p>正确答案：<strong>{{ currentQuestion.answer }}</strong></p>
-            <p v-if="currentQuestion.analysis">解析：{{ currentQuestion.analysis }}</p>
+            <!-- 解答题：AI 点评 -->
+            <template v-if="currentQuestion.question_type === '解答'">
+              <div class="score-bar">
+                <span>得分</span>
+                <el-progress :percentage="essayScore" :color="essayScore >= 60 ? '#67C23A' : '#F56C6C'" style="flex: 1" />
+                <strong>{{ essayScore }}</strong> / 100
+              </div>
+              <div class="feedback-box" v-if="essayFeedback">
+                <p><strong>AI 点评：</strong>{{ essayFeedback }}</p>
+              </div>
+            </template>
+            <p class="correct-answer-line">
+              {{ currentQuestion.question_type === '解答' ? '参考' : '正确' }}答案：
+              <el-tag :type="isCorrect ? 'success' : 'danger'" size="large">{{ currentQuestion.answer || '无' }}</el-tag>
+            </p>
+            <div v-if="currentQuestion.analysis" class="analysis-box">
+              <h5>📖 详细解析</h5>
+              <p v-html="renderLatex(currentQuestion.analysis)"></p>
+            </div>
           </div>
         </div>
 
         <div class="action-area">
-          <el-button v-if="!showResult" type="primary" size="large" @click="submitAnswer" :disabled="!userAnswer">
-            提交答案
+          <el-button v-if="!showResult" type="primary" size="large" @click="submitAnswer" :disabled="!userAnswer" :loading="submitting">
+            {{ submitting && currentQuestion.question_type === '解答' ? 'AI 判分中...' : '提交答案' }}
           </el-button>
           <el-button v-else type="primary" size="large" @click="nextQuestion">
             {{ currentIndex < questions.length - 1 ? '下一题' : '查看结果' }}
@@ -180,7 +243,9 @@
 import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
+import { Camera } from '@element-plus/icons-vue'
 import api from '@/utils/request'
+import { renderLatex } from '@/utils/latex'
 
 const router = useRouter()
 
@@ -193,7 +258,9 @@ const loadingQuestions = ref(false)
 
 const filter = ref({
   subject: '数学',
-  knowledge_point: ''
+  knowledge_point: '',
+  question_type: '',
+  difficulty: 0
 })
 const questionCount = ref(10)
 const questions = ref([])
@@ -202,6 +269,32 @@ const userAnswer = ref('')
 const isCorrect = ref(false)
 const correctCount = ref(0)
 const wrongCount = ref(0)
+const essayScore = ref(0)
+const essayFeedback = ref('')
+const submitting = ref(false)
+const uploadedImage = ref('')
+
+const practiceUploadUrl = '/api/practice/upload-image'
+const uploadHeaders = computed(() => ({
+  Authorization: `Bearer ${localStorage.getItem('token')}`
+}))
+
+const beforeImageUpload = (file) => {
+  const isImage = file.type.startsWith('image/')
+  const isLt10M = file.size / 1024 / 1024 < 10
+  if (!isImage) { ElMessage.error('只能上传图片文件!'); return false }
+  if (!isLt10M) { ElMessage.error('图片大小不能超过 10MB!'); return false }
+  return true
+}
+
+const handleImageSuccess = (response) => {
+  if (response.code === 200) {
+    uploadedImage.value = response.data.image_path
+    ElMessage.success('图片上传成功')
+  } else {
+    ElMessage.error(response.message || '上传失败')
+  }
+}
 
 // 整场计时器
 const sessionTime = ref(0)
@@ -298,6 +391,12 @@ const startNormalPractice = async () => {
     if (filter.value.knowledge_point) {
       params.knowledge_point = filter.value.knowledge_point
     }
+    if (filter.value.question_type) {
+      params.question_type = filter.value.question_type
+    }
+    if (filter.value.difficulty) {
+      params.difficulty = filter.value.difficulty
+    }
     const res = await api.get('/practice/questions', { params })
     if (res.code === 200) {
       questions.value = res.data.list
@@ -323,13 +422,20 @@ const startNormalPractice = async () => {
 }
 
 const submitAnswer = async () => {
+  submitting.value = true
   try {
-    const res = await api.post('/practice/submit-answer', {
+    const payload = {
       question_id: currentQuestion.value.id,
       answer: userAnswer.value
-    })
+    }
+    if (uploadedImage.value) {
+      payload.image_path = uploadedImage.value
+    }
+    const res = await api.post('/practice/submit-answer', payload)
     if (res.code === 200) {
       isCorrect.value = res.data.is_correct
+      essayScore.value = res.data.score || 0
+      essayFeedback.value = res.data.feedback || ''
       if (isCorrect.value) {
         correctCount.value++
       } else {
@@ -339,21 +445,24 @@ const submitAnswer = async () => {
     }
   } catch (error) {
     console.error('提交答案失败', error)
+  } finally {
+    submitting.value = false
   }
 }
 
-const nextQuestion = () => {
+const nextQuestion = async () => {
   if (currentIndex.value < questions.value.length - 1) {
     currentIndex.value++
     userAnswer.value = ''
     showResult.value = false
+    uploadedImage.value = ''
   } else {
     stopTimer()
     // 记录整场学习时长
-    api.post('/practice/session-complete', {
+    await api.post('/practice/session-complete', {
       total_time: sessionTime.value,
       question_count: questions.value.length
-    })
+    }).catch(() => {})
     isPracticing.value = false
     showSummary.value = true
   }
@@ -365,7 +474,7 @@ const exitPractice = () => {
     api.post('/practice/session-complete', {
       total_time: sessionTime.value,
       question_count: currentIndex.value + 1
-    })
+    }).catch(() => {})
   }
   isPracticing.value = false
   showResult.value = false
@@ -469,6 +578,26 @@ const backToStart = () => {
   font-weight: 500;
 }
 
+.essay-answer {
+  margin: 20px 0;
+}
+
+.essay-answer .el-textarea {
+  width: 100%;
+  font-size: 15px;
+}
+
+.essay-upload {
+  margin-top: 12px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.uploaded-preview {
+  display: inline-flex;
+}
+
 .option-group {
   display: flex;
   flex-direction: column;
@@ -483,25 +612,82 @@ const backToStart = () => {
   margin: 30px 0;
   padding: 20px;
   border-radius: 8px;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 10px;
 }
 
 .result-area.correct {
   background: #f0f9eb;
+}
+
+.result-area.correct .result-header {
   color: #67C23A;
 }
 
 .result-area.wrong {
   background: #fef0f0;
+}
+
+.result-area.wrong .result-header {
   color: #F56C6C;
 }
 
+.result-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 18px;
+  font-weight: 600;
+  margin-bottom: 15px;
+}
+
 .answer-detail {
-  margin-top: 15px;
   text-align: left;
+  color: #303133;
+}
+
+.correct-answer-line {
+  margin: 12px 0;
+  font-size: 15px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.analysis-box {
+  background: #fff;
+  border-radius: 8px;
+  padding: 16px;
+  margin-top: 12px;
+  border: 1px solid #e4e7ed;
+}
+
+.analysis-box h5 {
+  margin: 0 0 10px;
+  font-size: 15px;
+  color: #303133;
+}
+
+.analysis-box p {
+  margin: 0;
+  line-height: 1.8;
+  color: #606266;
+  white-space: pre-wrap;
+}
+
+.score-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 10px 0;
+  font-size: 14px;
+}
+
+.feedback-box {
+  background: #fff;
+  border-radius: 8px;
+  padding: 12px 16px;
+  border: 1px solid #e4e7ed;
+  margin: 10px 0;
+  line-height: 1.8;
   color: #606266;
 }
 

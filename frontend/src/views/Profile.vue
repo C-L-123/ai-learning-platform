@@ -149,10 +149,11 @@ const updateProfile = async () => {
     const res = await api.post('/auth/update-profile', profileForm.value)
     if (res.code === 200) {
       ElMessage.success('更新成功')
-      userStore.fetchUserInfo()
+      await userStore.fetchUserInfo()
     }
   } catch (error) {
     console.error('更新失败', error)
+    ElMessage.error('更新失败，请重试')
   } finally {
     updating.value = false
   }

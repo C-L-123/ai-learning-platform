@@ -1,7 +1,10 @@
+import os
 import json
+import uuid
 from datetime import datetime, date
-from flask import Blueprint, request, jsonify
+from flask import Blueprint, request, jsonify, current_app
 from sqlalchemy import func
+from werkzeug.utils import secure_filename
 
 from app.models import db, Question, StudyRecord, WrongQuestion, UserKnowledgeMastery
 from app.utils.jwt_auth import token_required
@@ -48,7 +51,9 @@ def _format_question(q):
         'difficulty': q.difficulty,
         'question_type': q.question_type,
         'content': q.content,
-        'options': json.loads(q.options) if q.options else None
+        'options': json.loads(q.options) if q.options else None,
+        'answer': q.answer,
+        'analysis': q.analysis or ''
     }
 
 
@@ -58,8 +63,9 @@ def get_questions(current_user):
     """AI 生成题目列表"""
     subject = request.args.get('subject', '数学')
     knowledge_point = request.args.get('knowledge_point')
-    difficulty = request.args.get('difficulty', 1, type=int)
+    difficulty = request.args.get('difficulty', 0, type=int)
     count = request.args.get('page_size', 10, type=int)
+    question_type = request.args.get('question_type')
 
     # 限制单次出题数量
     count = min(count, 20)
@@ -70,7 +76,8 @@ def get_questions(current_user):
             subject=subject,
             knowledge_point=knowledge_point,
             difficulty=difficulty,
-            count=count
+            count=count,
+            question_type=question_type
         )
 
         if not questions_data:
@@ -145,16 +152,29 @@ def submit_answer(current_user):
     question_id = data.get('question_id')
     user_answer = data.get('answer')
     answer_time = data.get('answer_time', 0)
+    image_path = data.get('image_path')
     
     if not question_id or user_answer is None:
         return jsonify({'code': 400, 'message': '参数不完整', 'data': None}), 400
-    
+
     question = Question.query.get(question_id)
     if not question:
         return jsonify({'code': 404, 'message': '题目不存在', 'data': None}), 404
-    
+
+    score = None
+    feedback = None
+
     # 判断答案是否正确
-    is_correct = str(user_answer).strip() == str(question.answer).strip()
+    if question.question_type == '解答':
+        # 解答题：调用 AI 判分
+        ai = get_ai_service()
+        grade_result = ai.grade_essay(question.content, question.answer, user_answer, image_path)
+        is_correct = grade_result['is_correct']
+        score = grade_result['score']
+        feedback = grade_result['feedback']
+    else:
+        # 选择题：字符串比较
+        is_correct = str(user_answer).strip() == str(question.answer).strip()
     
     # 记录学习记录
     study_record = StudyRecord(
@@ -211,15 +231,21 @@ def submit_answer(current_user):
     
     db.session.commit()
     
+    result_data = {
+        'is_correct': is_correct,
+        'correct_answer': question.answer,
+        'analysis': question.analysis,
+        'knowledge_point': question.knowledge_point,
+        'question_type': question.question_type
+    }
+    if score is not None:
+        result_data['score'] = score
+        result_data['feedback'] = feedback
+
     return jsonify({
         'code': 200,
         'message': '提交成功',
-        'data': {
-            'is_correct': is_correct,
-            'correct_answer': question.answer,
-            'analysis': question.analysis,
-            'knowledge_point': question.knowledge_point
-        }
+        'data': result_data
     })
 
 @bp.route('/statistics', methods=['GET'])
@@ -327,4 +353,33 @@ def get_daily_trend(current_user):
         'code': 200,
         'message': '获取成功',
         'data': trend_data
+    })
+
+
+@bp.route('/upload-image', methods=['POST'])
+@token_required
+def upload_answer_image(current_user):
+    """上传解答题的作答图片"""
+    if 'file' not in request.files:
+        return jsonify({'code': 400, 'message': '没有上传文件', 'data': None}), 400
+
+    file = request.files['file']
+    if file.filename == '':
+        return jsonify({'code': 400, 'message': '没有选择文件', 'data': None}), 400
+
+    allowed = {'png', 'jpg', 'jpeg', 'gif', 'bmp'}
+    ext = file.filename.rsplit('.', 1)[1].lower() if '.' in file.filename else ''
+    if ext not in allowed:
+        return jsonify({'code': 400, 'message': '不支持的文件格式', 'data': None}), 400
+
+    filename = secure_filename(f"practice_{uuid.uuid4().hex}_{file.filename}")
+    upload_folder = current_app.config.get('UPLOAD_FOLDER', 'uploads')
+    os.makedirs(upload_folder, exist_ok=True)
+    filepath = os.path.join(upload_folder, filename)
+    file.save(filepath)
+
+    return jsonify({
+        'code': 200,
+        'message': '上传成功',
+        'data': {'image_path': filepath}
     })

@@ -218,7 +218,11 @@ def get_today_review(current_user):
             'question_id': q.id,
             'content': q.content,
             'knowledge_point': q.knowledge_point,
-            'wrong_count': wq.wrong_count
+            'wrong_count': wq.wrong_count,
+            'options': json.loads(q.options) if q.options else None,
+            'correct_answer': q.answer,
+            'analysis': q.analysis or '',
+            'question_type': q.question_type or '单选'
         })
     
     return jsonify({

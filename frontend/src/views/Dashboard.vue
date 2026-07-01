@@ -126,6 +126,7 @@
 <script setup>
 import { ref, onMounted, onUnmounted } from 'vue'
 import * as echarts from 'echarts'
+import { ElMessage } from 'element-plus'
 import api from '@/utils/request'
 
 const trendChartRef = ref()
@@ -159,6 +160,7 @@ const loadData = async () => {
     }
   } catch (error) {
     console.error('加载数据失败', error)
+    ElMessage.error('加载数据失败，请刷新重试')
   }
 }
 

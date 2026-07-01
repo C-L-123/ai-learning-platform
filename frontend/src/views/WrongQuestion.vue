@@ -184,6 +184,7 @@ const loadStats = async () => {
     }
   } catch (error) {
     console.error('加载统计失败', error)
+    ElMessage.error('加载统计失败')
   }
 }
 
@@ -198,6 +199,7 @@ const loadWrongQuestions = async () => {
     }
   } catch (error) {
     console.error('加载错题失败', error)
+    ElMessage.error('加载错题失败')
   }
 }
 
@@ -210,6 +212,7 @@ const loadTodayReview = async () => {
     }
   } catch (error) {
     console.error('加载今日复习失败', error)
+    ElMessage.error('加载今日复习失败')
   }
 }
 
@@ -244,6 +247,7 @@ const submitReviewAnswer = async () => {
     }
   } catch (error) {
     console.error('提交复习答案失败', error)
+    ElMessage.error('提交失败，请重试')
   }
 }
 
@@ -264,6 +268,7 @@ const markMastered = async (id) => {
     }
   } catch (error) {
     console.error('标记失败', error)
+    ElMessage.error('标记失败')
   }
 }
 

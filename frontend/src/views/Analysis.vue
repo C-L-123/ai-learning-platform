@@ -202,7 +202,7 @@
 </template>
 
 <script setup>
-import { ref, onMounted, onUnmounted, nextTick } from 'vue'
+import { ref, computed, onMounted, onUnmounted, nextTick } from 'vue'
 import { useRouter } from 'vue-router'
 import * as echarts from 'echarts'
 import { ElMessage, ElMessageBox } from 'element-plus'
@@ -268,9 +268,9 @@ const generateReport = async () => {
 }
 
 const uploadUrl = '/api/analysis/upload'
-const uploadHeaders = {
+const uploadHeaders = computed(() => ({
   Authorization: `Bearer ${localStorage.getItem('token')}`
-}
+}))
 const uploadData = () => ({
   subject: subject.value,
   title: paperTitle.value || '未命名试卷'
@@ -373,6 +373,7 @@ const loadHistory = async () => {
     }
   } catch (error) {
     console.error('加载历史失败', error)
+    ElMessage.error('加载历史失败')
   }
 }
 
@@ -382,8 +383,9 @@ const viewDetail = async (id) => {
     if (res.code === 200) {
       detailData.value = res.data
       showDetailDialog.value = true
+      // Element Plus dialog 有动画延迟，需要等待 DOM 就绪
       await nextTick()
-      renderDetailRadar()
+      setTimeout(() => renderDetailRadar(), 100)
     }
   } catch (error) {
     console.error('获取详情失败', error)

@@ -29,6 +29,9 @@ backend/uploads/*
 *.swo
 *~
 
+# Claude AI配置缓存
+.claude/
+
 # Node.js
 node_modules/
 frontend/node_modules/
