@@ -1,55 +1,85 @@
+"""
+AI 智能学习平台 - 服务入口
+负责 Flask 应用初始化、蓝图注册、全局异常捕获、日志系统配置
+"""
+
 import os
-from flask import Flask, jsonify
+import logging
+from flask import Flask
 from flask_cors import CORS
-from dotenv import load_dotenv
 
-# 加载环境变量
-load_dotenv()
-
-# 导入模型和路由
+from config import Config
 from app.models import db
-from app.api import auth, analysis, practice, wrong_question, dashboard, subject
+from app.api import auth, analysis, ocr, practice, wrong_question, dashboard, subject
+from app.utils.response_util import success, fail
+from app.utils.logger_util import setup_logging
+
+logger = logging.getLogger(__name__)
+
 
 def create_app():
     app = Flask(__name__)
-    
-    # 配置
-    app.config['SECRET_KEY'] = os.getenv('SECRET_KEY', 'dev-secret-key')
-    app.config['JWT_SECRET_KEY'] = os.getenv('JWT_SECRET_KEY', 'jwt-secret-key')
-    app.config['UPLOAD_FOLDER'] = os.getenv('UPLOAD_FOLDER', 'uploads')
-    app.config['MAX_CONTENT_LENGTH'] = int(os.getenv('MAX_CONTENT_LENGTH', 16 * 1024 * 1024))
-    
-    # 数据库配置
-    mysql_host = os.getenv('MYSQL_HOST', 'localhost')
-    mysql_port = os.getenv('MYSQL_PORT', '3306')
-    mysql_user = os.getenv('MYSQL_USER', 'root')
-    mysql_password = os.getenv('MYSQL_PASSWORD', '123456')
-    mysql_database = os.getenv('MYSQL_DATABASE', 'ai_learning_platform')
-    
-    app.config['SQLALCHEMY_DATABASE_URI'] = f'mysql+pymysql://{mysql_user}:{mysql_password}@{mysql_host}:{mysql_port}/{mysql_database}?charset=utf8mb4'
+
+    # ========== 日志系统 ==========
+    setup_logging(log_dir='logs')
+
+    # ========== 应用配置（从 config.py 集中读取）==========
+    app.config['SECRET_KEY'] = Config.SECRET_KEY
+    app.config['JWT_SECRET_KEY'] = Config.JWT_SECRET_KEY
+    app.config['UPLOAD_FOLDER'] = Config.UPLOAD_FOLDER
+    app.config['MAX_CONTENT_LENGTH'] = Config.MAX_CONTENT_LENGTH
+    app.config['SQLALCHEMY_DATABASE_URI'] = Config.get_database_uri()
     app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
-    
-    # 初始化扩展
+
+    # ========== 初始化扩展 ==========
     CORS(app)
     db.init_app(app)
-    
-    # 注册蓝图
+
+    # ========== 注册蓝图 ==========
     app.register_blueprint(auth.bp, url_prefix='/api/auth')
-    app.register_blueprint(analysis.bp, url_prefix='/api/analysis')
+    app.register_blueprint(ocr.bp, url_prefix='/api/analysis')        # OCR 上传（拆分后的新蓝图）
+    app.register_blueprint(analysis.bp, url_prefix='/api/analysis')   # 学情分析（历史记录等）
     app.register_blueprint(practice.bp, url_prefix='/api/practice')
     app.register_blueprint(wrong_question.bp, url_prefix='/api/wrong-question')
     app.register_blueprint(dashboard.bp, url_prefix='/api/dashboard')
     app.register_blueprint(subject.bp, url_prefix='/api/subject')
-    
-    # 创建上传目录
+
+    # ========== 创建上传目录 ==========
     os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
-    
-    # 健康检查
+
+    # ========== 全局异常捕获 ==========
+
+    @app.errorhandler(Exception)
+    def handle_exception(e):
+        """捕获所有未处理的异常，统一返回错误信息（不爆堆栈）"""
+        code = getattr(e, 'code', 500)
+        if isinstance(code, int) and 400 <= code < 500:
+            return fail(message=f'请求错误: {code}', code=code)
+
+        logger.exception('服务器内部错误: %s', str(e))
+        return fail(message='服务器内部错误，请稍后重试', code=500)
+
+    @app.errorhandler(404)
+    def handle_404(e):
+        return fail(message='接口不存在', code=404)
+
+    @app.errorhandler(405)
+    def handle_405(e):
+        return fail(message='请求方法不允许', code=405)
+
+    @app.errorhandler(413)
+    def handle_413(e):
+        max_mb = Config.MAX_CONTENT_LENGTH // (1024 * 1024)
+        return fail(message=f'文件大小超过限制（最大 {max_mb}MB）', code=413)
+
+    # ========== 路由 ==========
+
     @app.route('/api/health')
     def health_check():
-        return jsonify({'code': 200, 'message': 'AI智能学习平台服务运行正常', 'data': None})
-    
+        return success(message='AI智能学习平台服务运行正常')
+
     return app
+
 
 if __name__ == '__main__':
     app = create_app()

@@ -1,8 +1,9 @@
 import json
-from flask import Blueprint, request, jsonify
+from flask import Blueprint, request
 
 from app.models import db, Subject
-from app.utils.jwt_auth import token_required
+from app.utils.jwt_util import login_required
+from app.utils.response_util import success, fail
 
 bp = Blueprint('subject', __name__)
 
@@ -21,15 +22,11 @@ def get_subjects():
             'description': s.description
         })
 
-    return jsonify({
-        'code': 200,
-        'message': '获取成功',
-        'data': result
-    })
+    return success(data=result)
 
 
 @bp.route('/all', methods=['GET'])
-@token_required
+@login_required
 def get_all_subjects(current_user):
     """获取所有科目列表（含禁用，管理用）"""
     subjects = Subject.query.order_by(Subject.id).all()
@@ -45,26 +42,22 @@ def get_all_subjects(current_user):
             'created_at': s.created_at.strftime('%Y-%m-%d %H:%M:%S') if s.created_at else None
         })
 
-    return jsonify({
-        'code': 200,
-        'message': '获取成功',
-        'data': result
-    })
+    return success(data=result)
 
 
 @bp.route('/add', methods=['POST'])
-@token_required
+@login_required
 def add_subject(current_user):
     """新增科目"""
     data = request.get_json()
 
     name = data.get('name', '').strip()
     if not name:
-        return jsonify({'code': 400, 'message': '科目名称不能为空', 'data': None}), 400
+        return fail(message='科目名称不能为空', code=400)
 
     # 检查是否重名
     if Subject.query.filter_by(name=name).first():
-        return jsonify({'code': 400, 'message': '科目名称已存在', 'data': None}), 400
+        return fail(message='科目名称已存在', code=400)
 
     keywords = data.get('keywords', [])
     if isinstance(keywords, str):
@@ -81,35 +74,31 @@ def add_subject(current_user):
     db.session.add(subject)
     db.session.commit()
 
-    return jsonify({
-        'code': 200,
-        'message': '添加成功',
-        'data': {
-            'id': subject.id,
-            'name': subject.name,
-            'keywords': keywords,
-            'description': subject.description
-        }
-    })
+    return success(data={
+        'id': subject.id,
+        'name': subject.name,
+        'keywords': keywords,
+        'description': subject.description
+    }, message='添加成功')
 
 
 @bp.route('/update/<int:subject_id>', methods=['POST'])
-@token_required
+@login_required
 def update_subject(current_user, subject_id):
     """更新科目"""
     subject = Subject.query.get(subject_id)
     if not subject:
-        return jsonify({'code': 404, 'message': '科目不存在', 'data': None}), 404
+        return fail(message='科目不存在', code=404)
 
     data = request.get_json()
 
     if 'name' in data:
         new_name = data['name'].strip()
         if not new_name:
-            return jsonify({'code': 400, 'message': '科目名称不能为空', 'data': None}), 400
+            return fail(message='科目名称不能为空', code=400)
         existing = Subject.query.filter(Subject.name == new_name, Subject.id != subject_id).first()
         if existing:
-            return jsonify({'code': 400, 'message': '科目名称已存在', 'data': None}), 400
+            return fail(message='科目名称已存在', code=400)
         subject.name = new_name
 
     if 'keywords' in data:
@@ -126,26 +115,18 @@ def update_subject(current_user, subject_id):
 
     db.session.commit()
 
-    return jsonify({
-        'code': 200,
-        'message': '更新成功',
-        'data': None
-    })
+    return success(message='更新成功')
 
 
 @bp.route('/delete/<int:subject_id>', methods=['DELETE'])
-@token_required
+@login_required
 def delete_subject(current_user, subject_id):
     """删除科目"""
     subject = Subject.query.get(subject_id)
     if not subject:
-        return jsonify({'code': 404, 'message': '科目不存在', 'data': None}), 404
+        return fail(message='科目不存在', code=404)
 
     db.session.delete(subject)
     db.session.commit()
 
-    return jsonify({
-        'code': 200,
-        'message': '删除成功',
-        'data': None
-    })
+    return success(message='删除成功')
